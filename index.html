@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#071827">
+<title>Multi-Asset Liquidity Radar | 即時清算總覽</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<div class="shell">
+<header class="topbar">
+  <div><div class="brand">MULTI-ASSET LIQUIDITY RADAR <span class="version">v1.1.1</span></div><div class="subtitle">多幣種即時清算總覽｜CoinGlass 24H × Pionex × BTC 39 特徵參考模型</div></div>
+  <div class="header-status"><span id="liveStatus" class="status-pill waiting">連線初始化</span><span id="clock">台灣時間 --:--:--</span><button id="refreshBtn" type="button">⟳ 全部更新</button></div>
+</header>
+<section class="toolbar">
+  <div class="filter-group" id="groupFilters"><button type="button" data-group="all" class="active">全部 <span id="allCount">0</span></button><button type="button" data-group="crypto">加密貨幣 <span id="cryptoCount">0</span></button><button type="button" data-group="stock">美股／商品 <span id="stockCount">0</span></button></div>
+  <label class="search-wrap"><input id="searchInput" type="search" placeholder="搜尋 symbols.js 標的…" aria-label="搜尋標的"/></label>
+  <label class="sort-label">排序 <select id="sortBy"><option value="watchlist">清單順序</option><option value="symbol">幣種名稱</option><option value="ha">平均 K 黃／紫</option><option value="edge">方向差距最大</option><option value="upper">先上掃最高</option><option value="lower">先下掃最高</option><option value="near">離清算界最近</option></select></label>
+</section>
+<div class="overview"><span id="coverage">等待資料</span><span class="legend"><i class="leg up"></i>上界 <i class="leg now"></i>現價 <i class="leg down"></i>下界　<span class="ha-yellow">黃＝偏多</span>　<span class="ha-purple">紫＝偏空</span></span></div>
+<div class="table-scroll"><table class="radar-table">
+<colgroup><col class="c-index"><col class="c-symbol"><col class="c-radar"><col class="c-ha"><col class="c-prob"></colgroup>
+<thead><tr>
+<th data-sort="watchlist" aria-sort="ascending"><button class="th-sort" type="button" data-sort="watchlist" title="依項次排序，重複點擊切換升／降冪">項次 <span class="sort-indicator" aria-hidden="true">▲</span></button></th>
+<th data-sort="symbol" aria-sort="none"><button class="th-sort" type="button" data-sort="symbol" title="依幣種代碼 A－Z／Z－A 排序">幣種 <span class="sort-indicator" aria-hidden="true"></span></button></th>
+<th data-sort="near" aria-sort="none"><button class="th-sort" type="button" data-sort="near" title="依現價到最近清算界的百分比排序">清算上下界／現價 <span class="sort-indicator" aria-hidden="true"></span></button><small>24H · 相對位置</small></th>
+<th data-sort="ha" aria-sort="none"><button class="th-sort" type="button" data-sort="ha" title="依日線平均 K 黃／紫排序">日線平均 K <span class="sort-indicator" aria-hidden="true"></span></button></th>
+<th data-sort="upper" aria-sort="none"><button class="th-sort" type="button" data-sort="upper" title="依先上掃機率排序；反向則先下掃機率較高">先掃方向 <span class="sort-indicator" aria-hidden="true"></span></button><small>BTC 模型參考</small></th>
+</tr></thead>
+<tbody id="radarBody"><tr><td colspan="5" class="empty">載入 symbols.js 中…</td></tr></tbody></table></div>
+<div class="table-footer"><span id="loadedCount">尚未載入</span><span>點擊表頭排序｜現價每 10 秒｜CoinGlass 每 60 秒｜K 線背景更新｜不凍結、不結算、不儲存紀錄</span></div>
+<section class="footnotes"><b>重要說明：</b>上下界優先 CoinGlass 24H 真實資料來源；找不到時明確標註為 15M 價格代理估算。先上掃／先下掃為 BTC 39 特徵模型套用滾動行情的<strong>未校準參考數值</strong>，不是其他幣種的歷史實際命中率，也不是 CoinGlass 官方機率。資料不足以「--」顯示，絕不填造 50/50。</section>
+<details class="diag" id="diagPanel"><summary>資料連線及錯誤診斷 <span id="diagCount">0</span></summary><div id="diagnostics"></div></details>
+</div>
+<script defer src="https://youjianchonglangshou-design.github.io/BTC_iquidation/coinglass-decrypt.js"></script>
+<script defer src="https://youjianchonglangshou-design.github.io/BTC_iquidation/model_predictor.js"></script>
+<script defer src="https://youjianchonglangshou-design.github.io/BTC_iquidation/probability_engine.js"></script>
+<script defer src="./symbols.js"></script>
+<script defer src="./app.js"></script>
+</body></html>

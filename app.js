@@ -1,4 +1,4 @@
-/* Multi-Asset Liquidity Radar v1.1.1 — multi-row watchlist dashboard.
+/* Multi-Asset Liquidity Radar v1.1.3 — exact SState S-state / midline regime integration.
  * Uses original source's existing Pionex, CoinGlass, BTC-model algorithms.
  * No K-line charts, no frozen snapshots, no overnight settlements.
  */
@@ -17,7 +17,7 @@
  const providerOverrides=Object.freeze({WTI:{tv:'PIONEX:CLUSDT.P',pionex:'WTI_USDT_PERP',cg:['CL']},CL:{tv:'PIONEX:CLUSDT.P',pionex:'WTI_USDT_PERP',cg:['CL']}});
  function canonical(s){const over=providerOverrides[String(s.id).toUpperCase()];return over?{...s,...over,cg:[...new Set([...over.cg,...(s.cg||[])])]}:{...s};}
  const entries=Array.isArray(window.LIQ_SYMBOLS)?window.LIQ_SYMBOLS.map(canonical):[];
- const records=entries.map((s,index)=>({s,index,id:s.id,price:null,priceAt:0,priceFeed:'',bars15:[],daily:[],barsAt:0,dailyAt:0,ha:null,model:null,up:null,down:null,source:'none',cgId:'',cgFactor:1,upAmount:null,downAmount:null,zones:{upper:[],lower:[]},issue:'',errors:{},lastAttempt:{},dom:null}));
+ const records=entries.map((s,index)=>({s,index,id:s.id,price:null,priceAt:0,priceFeed:'',bars15:[],daily:[],barsAt:0,dailyAt:0,ha:null,cci:null,sstate:null,midline:null,liveOHLC:null,model:null,up:null,down:null,source:'none',cgId:'',cgFactor:1,upAmount:null,downAmount:null,zones:{upper:[],lower:[]},issue:'',errors:{},lastAttempt:{},dom:null}));
  const state={cgRecords:new Map(),cgAt:0,cgVersion:'',cgError:'尚未取得',cgBusy:null,group:'all',search:'',sort:'watchlist',sortDir:1,diagDirty:false,priceAt:0,priceBusy:null,loadingJobs:0,queue:[],jobSet:new Set(),networkLog:[],renderAt:0};
  const currentRows=()=>records.filter(r=>(state.group==='all'||r.s.group===state.group)&&(!state.search||r.id.toUpperCase().includes(state.search)||r.s.cg.some(x=>x.toUpperCase().includes(state.search))));
  const sourceName=r=>r.source==='coinglass'?'CoinGlass 24H':r.source==='proxy'?'15M 代理估算':'等待上下界';
@@ -139,14 +139,65 @@
     return result;
   }
 
- function dailyHA(r){const days=r.daily.slice().sort((a,b)=>a.t-b.t);if(days.length<26)return null;
-   const now=Date.now();const currentStart=Math.floor(now/DAY)*DAY;const last=days.at(-1);
-   if(priceEnough(livePrice(r))&&last&&last.t>=currentStart-DAY && last.t<=now){last.c=livePrice(r);last.h=Math.max(last.h,livePrice(r));last.l=Math.min(last.l,livePrice(r));}
+ // Exactly the SState monitor's daily CCI(20) + SMA(14) color rule.
+ // Clone fetched candles; never change the cached historical source while the quote refreshes.
+ function dailyAsOf(r){
+   const days=r.daily.map(b=>({...b})).sort((a,b)=>a.t-b.t);
+   if(!days.length)return days;
+   const day=Math.floor(Date.now()/DAY)*DAY,p=livePrice(r),last=days.at(-1);
+   if(!priceEnough(p))return days;
+   const live=r.liveOHLC;
+   if(live?.day===day&&[live.o,live.h,live.l,live.c].every(priceEnough)){
+     const candle={t:day,o:live.o,h:Math.max(live.h,live.o,live.c),l:Math.min(live.l,live.o,live.c),c:live.c,v:last?.t===day?last.v||0:0};
+     if(last.t===day)days[days.length-1]=candle;
+     else if(last.t<day)days.push(candle);
+   }else if(last.t===day){
+     last.c=p;last.h=Math.max(last.h,p);last.l=Math.min(last.l,p);
+   }
+   // Without a 1D opening OHLC, do not pretend yesterday's candle is today's.
+   return days;
+ }
+ function dailyHA(days){
+   if(days.length<26)return null;
    let po=null,pc=null,before=null,cur=null;
    for(const b of days){const ho=po===null?(b.o+b.c)/2:(po+pc)/2,hc=(b.o+b.h+b.l+b.c)/4;before=cur;cur={color:hc>=ho?'黃':'紫',ho,hc,t:b.t};po=ho;pc=hc;}
    return cur?{...cur,priorColor:before?.color||'--'}:null;
  }
- function updateDerived(r){r.ha=dailyHA(r);
+ function dailyCciSma(days){
+   // SStateMarketTerminal/monitor-engine.js: CCI_LENGTH=20, CCI_SMOOTHING_LENGTH=14.
+   const n=days.length,cci=Array(n).fill(null),sma=Array(n).fill(null);
+   if(n<34)return null;
+   const tp=days.map(x=>(x.h+x.l+x.c)/3);
+   for(let i=19;i<n;i++){
+     const window=tp.slice(i-19,i+1),mean=window.reduce((x,y)=>x+y,0)/20;
+     const deviation=window.reduce((sum,x)=>sum+Math.abs(x-mean),0)/20;
+     if(deviation>0)cci[i]=(tp[i]-mean)/(.015*deviation);
+   }
+   for(let i=32;i<n;i++){
+     const window=cci.slice(i-13,i+1);
+     if(window.every(Number.isFinite))sma[i]=window.reduce((x,y)=>x+y,0)/14;
+   }
+   const value=sma[n-1],prev=sma[n-2];
+   if(!Number.isFinite(value)||!Number.isFinite(prev))return null;
+   const color=value>prev?'黃':value<prev?'紫':'--';
+   return {color,value,prev,change:value-prev,time:days.at(-1).t};
+ }
+ function dailySState(days){
+   // SStateMarketTerminal/monitor-engine.js is loaded before this script.
+   // Require same >=40 days as SState's monitor; otherwise do not mislabel OTHER as genuine.
+   if(days.length<40)return null;
+   const engine=window.SStateMonitorEngine;
+   if(!engine?.analyze)return null;
+   const rows=days.map(x=>({time:x.t,open:x.o,high:x.h,low:x.l,close:x.c,volume:x.v||0}));
+   const analyzed=engine.analyze(rows);
+   if(!analyzed?.midline||!analyzed?.s_state)return null;
+   return {sstate:String(analyzed.s_state),midline:analyzed.midline,source:'SStateMonitorEngine',engine:engine.constants?.ENGINE_VERSION||''};
+ }
+ function updateDerived(r){const days=dailyAsOf(r);r.ha=dailyHA(days);r.cci=dailyCciSma(days);
+   try{const s=dailySState(days);r.sstate=s?.sstate||null;r.midline=s?.midline||null;
+     r.errors.sstate=s?'':(!window.SStateMonitorEngine?.analyze?'SState 原版引擎尚未載入':days.length<40?'日線歷史不足 40 根':'SState 分析暫無結果');
+   }catch(e){r.sstate=null;r.midline=null;r.errors.sstate=String(e?.message||e);}
+
    r.zones=candidateZones(r.bars15,livePrice(r)||r.bars15.at(-1)?.c);
    const p=livePrice(r)||r.bars15.at(-1)?.c;
    const fresh=state.cgAt>0&&Date.now()-state.cgAt<180000;
@@ -169,9 +220,12 @@
  function el(tag,cls='',txt=''){const node=document.createElement(tag);if(cls)node.className=cls;if(txt)node.textContent=txt;return node;}
  function makeRow(r){const tr=el('tr');const tIndex=el('td','row-index','--');const tSymbol=el('td');const name=el('div','sym-name',r.id);const px=el('div','sym-price','--');const sf=el('div','sym-feed',r.s.group==='stock'?'Pionex 美股／商品':'Pionex 加密合約');tSymbol.append(name,px,sf);
    const tRadar=el('td');const plot=el('div','radar-area');const micro=el('div','radar-micro');const l=el('span'),rr=el('span');micro.append(l,rr);tRadar.append(plot,micro);
+   const tS=el('td');const sw=el('div','state-wrap');const sBadge=el('span','state-badge unknown','--');const sSub=el('div','state-sub','等待日線');sw.append(sBadge,sSub);tS.append(sw);
+   const tMid=el('td');const mw=el('div','mid-wrap');const midLabel=el('span','mid-label unknown','--');const midSub=el('div','mid-sub','等待日線');mw.append(midLabel,midSub);tMid.append(mw);
    const tHa=el('td');const hw=el('div','ha-wrap');const ha=el('span','ha-color unknown','--');const hn=el('div','ha-sub','等待日線');hw.append(ha,hn);tHa.append(hw);
+   const tCci=el('td');const cw=el('div','ha-wrap');const cci=el('span','ha-color unknown','--');const cn=el('div','ha-sub','等待日線');cw.append(cci,cn);tCci.append(cw);
    const tProb=el('td');const pp=el('div','prob-layout');const upBox=el('div','prob-side');const upK=el('div','prob-kicker','先上掃');const upNum=el('div','prob-num up','--');upBox.append(upK,upNum);const downBox=el('div','prob-side right');const downK=el('div','prob-kicker','先下掃');const downNum=el('div','prob-num down','--');downBox.append(downK,downNum);pp.append(upBox,downBox);const pBars=el('div','prob-bars');const pFill=el('div','prob-upbar');pBars.append(pFill);const pLabel=el('div','prob-label','BTC 模型等待中');tProb.append(pp,pBars,pLabel);
-   tr.append(tIndex,tSymbol,tRadar,tHa,tProb);r.dom={tr,tIndex,name,px,sf,plot,l,rr,ha,hn,upNum,downNum,pFill,pLabel};return tr;}
+   tr.append(tIndex,tSymbol,tRadar,tS,tMid,tHa,tCci,tProb);r.dom={tr,tIndex,name,px,sf,plot,l,rr,sBadge,sSub,midLabel,midSub,ha,hn,cci,cn,upNum,downNum,pFill,pLabel};return tr;}
  function plotRadar(r){const {plot,l,rr}=r.dom;plot.replaceChildren();const price=livePrice(r);
    if(!(priceEnough(r.up)&&priceEnough(r.down)&&priceEnough(price))){plot.append(el('div','radar-empty',!priceEnough(price)?'等待即時現價…':'等待有效上下清算界…'));l.textContent=sourceName(r);rr.textContent='';return;}
    const high=Math.max(r.up,price,r.down),low=Math.min(r.up,price,r.down),span=Math.max(high-low,price*.0005);
@@ -188,7 +242,22 @@
  }
  function renderRow(r){if(!r.dom)return;const d=r.dom;d.px.textContent=priceEnough(livePrice(r))?MONEY(r.price):(r.priceAt?'現價過期 --':'現價 --');d.sf.textContent=r.source==='coinglass'?`CoinGlass ${r.cgId} · ${r.s.tv}`:r.source==='proxy'?'15M 價格代理 · '+r.s.tv:r.s.tv;
    plotRadar(r);
+   const sv=r.sstate||null,mid=r.midline;
+   const stateClass=({'S3':'s3','S2':'s2','S1':'s1','S0.5':'s05','S0':'s0','OTHER':'other'})[sv]||'unknown';
+   const stateName=({'S3':'3浪啟動','S2':'2浪回踩','S1':'1浪突破','S0.5':'優質反轉','S0':'下殺反彈','OTHER':'其他'})[sv]||'等待日線';
+   d.sBadge.textContent=sv||'--';d.sBadge.className='state-badge '+stateClass;
+   d.sSub.textContent=sv?stateName:(r.daily.length&&r.daily.length<40?'日 K 不足 40 根':'資料不足');
+   d.sBadge.title=sv?`SState ${sv}｜${stateName}｜${window.SStateMonitorEngine?.constants?.ENGINE_VERSION||'原版引擎'}`:(r.errors.sstate||'尚無 S 狀態');
+   const midClass=({'rising':'rising','flat':'flat','flattening':'flattening','falling':'falling'})[mid?.state]||'unknown';
+   d.midLabel.textContent=mid?mid.symbol+' '+mid.label:'--';d.midLabel.className='mid-label '+midClass;
+   d.midSub.textContent=mid?.state?`${mid.recent_5d_slope_pct_per_day>0?'+':''}${mid.recent_5d_slope_pct_per_day}%/日`:'等待資料';
+   d.midLabel.title=mid?`SState 最近5日中軌斜率 ${mid.recent_5d_slope_pct_per_day}%/日；前5日 ${mid.previous_5d_slope_pct_per_day}%/日；改善 ${mid.slope_improvement_pct_per_day}%/日`:'日 K 中軌斜率尚無資料';
    d.ha.textContent=r.ha?.color||'--';d.ha.className='ha-color '+(r.ha?.color==='黃'?'yellow':r.ha?.color==='紫'?'purple':'unknown');d.hn.textContent=r.ha?'前日 '+r.ha.priorColor+' → '+r.ha.color:(r.errors.day?'日線取得失敗':'等待日線');d.hn.className='ha-sub '+(r.ha?.color==='黃'?'yellow':r.ha?.color==='紫'?'purple':'');
+   d.cci.textContent=r.cci?.color==='黃'||r.cci?.color==='紫'?r.cci.color:'--';
+   d.cci.className='ha-color '+(r.cci?.color==='黃'?'yellow':r.cci?.color==='紫'?'purple':'unknown');
+   d.cn.textContent=r.cci?`SMA ${r.cci.value.toFixed(1)}`:(r.daily.length&&r.daily.length<34?'日 K 不足 34 根':r.errors.day?'日 K 取得失敗':'等待日 K');
+   d.cn.className='ha-sub '+(r.cci?.color==='黃'?'yellow':r.cci?.color==='紫'?'purple':'');
+   d.cci.title=r.cci?`CCI(20) / SMA(14)：當 ${r.cci.value.toFixed(3)}，前 ${r.cci.prev.toFixed(3)}，差 ${r.cci.change.toFixed(3)}`:'CCI-SMA 尚無有效資料';
    const m=r.model,valid=m&&priceEnough(r.up)&&priceEnough(r.down)&&priceEnough(livePrice(r));d.upNum.textContent=valid?pct(m.up*100):'--';d.downNum.textContent=valid?pct(m.down*100):'--';
    d.upNum.className='prob-num up '+(valid?(m.up>m.down?'winner':m.up<m.down?'loser':''):'');d.downNum.className='prob-num down '+(valid?(m.down>m.up?'winner':m.down<m.up?'loser':''):'');d.pFill.style.width=valid?(m.up*100).toFixed(2)+'%':'0%';d.pLabel.textContent=valid?'BTC 跨標的參考 · '+(r.source==='proxy'?'代理上下界':'CoinGlass 界'):(r.errors.model||'資料不足，不顯示機率');d.tr.title=Object.entries(r.errors).filter(([,value])=>value).map(([key,value])=>`${key}: ${value}`).join(' | ')||'';
  }
@@ -197,7 +266,12 @@
  function sortValue(r,key){
    if(key==='watchlist')return r.index;
    if(key==='symbol')return r.id.toUpperCase();
-   if(key==='ha')return r.ha?(r.ha.color==='黃'?1:r.ha.color==='紫'?0:-1):null;
+   if(key==='ha')return r.ha&&['黃','紫'].includes(r.ha.color)?(r.ha.color==='黃'?1:0):null;
+   if(key==='sstate')return r.sstate?({'S3':60,'S2':50,'S1':40,'S0.5':30,'S0':20,'OTHER':0}[r.sstate]??0):null;
+   if(key==='midline')return r.midline?({'rising':4,'flat':3,'flattening':2,'falling':1}[r.midline.state]??0):null;
+   if(key==='cci')return r.cci&&['黃','紫'].includes(r.cci.color)?(r.cci.color==='黃'?1:0):null;
+   if(key==='bull_pair')return r.ha?.color==='黃'&&r.cci?.color==='黃'?1:0;
+   if(key==='bear_pair')return r.ha?.color==='紫'&&r.cci?.color==='紫'?1:0;
    const price=livePrice(r);
    if(key==='near')return priceEnough(price)&&priceEnough(r.up)&&priceEnough(r.down)
      ?Math.min(Math.abs(r.up/price-1),Math.abs(1-r.down/price))*100:null;
@@ -219,12 +293,41 @@
      if(va===null&&vb===null)return a.index-b.index;
      if(va===null)return 1;
      if(vb===null)return -1;
-     return compareValues(va,vb)*state.sortDir||a.index-b.index;
+     const primary=compareValues(va,vb)*state.sortDir;
+     if(primary)return primary;
+     // When sorting HA yellow first, yellow+yellow is ahead of yellow+purple;
+     // in purple-first order, purple+purple is ahead of purple+yellow.
+     if(state.sort==='ha'||state.sort==='cci'){
+       const pair=(r)=>{
+         const own=state.sort==='ha'?r.ha?.color:r.cci?.color;
+         const other=state.sort==='ha'?r.cci?.color:r.ha?.color;
+         return own&&other===own?2:(other==='黃'||other==='紫'?1:0);
+       };
+       const secondary=pair(b)-pair(a);
+       if(secondary)return secondary;
+     }
+     if(state.sort==='ha'||state.sort==='bull_pair'||state.sort==='bear_pair'){
+       // Prefer long-friendly midline & stronger S-state within same HA/CCI combination.
+       // This is ONLY a secondary ordering rule, not a probability feature.
+       const am=sortValue(a,'midline')??-1,bm=sortValue(b,'midline')??-1;
+       if(am!==bm)return bm-am;
+       const as=sortValue(a,'sstate')??-1,bs=sortValue(b,'sstate')??-1;
+       if(as!==bs)return bs-as;
+     }
+     if(state.sort==='bull_pair'){
+       const secondary=Number(b.ha?.color==='黃')-Number(a.ha?.color==='黃')||Number(b.cci?.color==='黃')-Number(a.cci?.color==='黃');
+       if(secondary)return secondary;
+     }
+     if(state.sort==='bear_pair'){
+       const secondary=Number(b.ha?.color==='紫')-Number(a.ha?.color==='紫')||Number(b.cci?.color==='紫')-Number(a.cci?.color==='紫');
+       if(secondary)return secondary;
+     }
+     return a.index-b.index;
    });
    const body=$('radarBody'),frag=document.createDocumentFragment();
    rows.forEach((r,i)=>{r.dom.tIndex.textContent=String(i+1);frag.append(r.dom.tr);});
    body.replaceChildren(frag);
-   if(!rows.length){const tr=el('tr'),td=el('td','empty','沒有符合的標的；請檢查 symbols.js 或篩選條件');td.colSpan=5;tr.append(td);body.append(tr);}
+   if(!rows.length){const tr=el('tr'),td=el('td','empty','沒有符合的標的；請檢查 symbols.js 或篩選條件');td.colSpan=8;tr.append(td);body.append(tr);}
    document.querySelectorAll('.radar-table thead th[data-sort]').forEach(th=>{
      const active=th.dataset.sort===state.sort;
      th.setAttribute('aria-sort',active?(state.sortDir===1?'ascending':'descending'):'none');
@@ -233,14 +336,14 @@
    });
  }
  function chooseSort(key,headerClick){
-   const defaults={watchlist:1,symbol:1,near:1,ha:-1,upper:-1,lower:-1,edge:-1};
+   const defaults={watchlist:1,symbol:1,near:1,sstate:-1,midline:-1,ha:-1,cci:-1,bull_pair:-1,bear_pair:-1,upper:-1,lower:-1,edge:-1};
    if(headerClick&&state.sort===key)state.sortDir*=-1;
    else{state.sort=key;state.sortDir=defaults[key]||1;}
    if($('sortBy'))$('sortBy').value=key;
    reorder();renderOverview();
  }
- function renderOverview(){const coverage=records.filter(r=>r.source==='coinglass').length,proxy=records.filter(r=>r.source==='proxy').length,model=records.filter(r=>r.model).length,ha=records.filter(r=>r.ha).length,price=records.filter(r=>priceEnough(livePrice(r))).length;
-   $('coverage').textContent=`${records.length} 標的｜現價 ${price}｜CoinGlass ${coverage}｜代理 ${proxy}｜平均K ${ha}｜機率 ${model}`;
+ function renderOverview(){const coverage=records.filter(r=>r.source==='coinglass').length,proxy=records.filter(r=>r.source==='proxy').length,model=records.filter(r=>r.model).length,ha=records.filter(r=>r.ha).length,sstate=records.filter(r=>r.sstate).length,midline=records.filter(r=>r.midline).length,cci=records.filter(r=>r.cci?.color==='黃'||r.cci?.color==='紫').length,price=records.filter(r=>priceEnough(livePrice(r))).length;
+   $('coverage').textContent=`${records.length} 標的｜現價 ${price}｜CoinGlass ${coverage}｜代理 ${proxy}｜S狀態 ${sstate}｜中軌 ${midline}｜平均K ${ha}｜CCI-SMA ${cci}｜機率 ${model}`;
    $('loadedCount').textContent=`已顯示 ${currentRows().length}／${records.length} 個 · 更新 ${state.priceAt?new Date(state.priceAt).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei'}):'等待中'}`;
    const s=$('liveStatus');s.className='status-pill '+(price===0?'waiting':'');s.textContent=price?'即時監控 · '+price+'/'+records.length:'等待行情';
  }
@@ -253,8 +356,13 @@
  }
  async function fetchPrices(){if(state.priceBusy)return state.priceBusy;const task=(async()=>{
    const found=new Set();const chunks=[];for(let i=0;i<records.length;i+=70)chunks.push(records.slice(i,i+70));
-   for(const group of chunks){try{const tickers=[...new Set(group.map(r=>r.s.tv.toUpperCase()))];const payload={filter:[],options:{lang:'en'},symbols:{query:{types:[]},tickers},columns:['close'],range:[0,Math.max(80,tickers.length+10)]};const j=await json(SCANNER,{method:'POST',mode:'cors',headers:{Accept:'application/json','Content-Type':'text/plain'},body:JSON.stringify(payload)},11000);const byTv=new Map((j.data||[]).map(x=>[String(x.s).toUpperCase(),Number(x.d?.[0])]));for(const r of group){const p=byTv.get(r.s.tv.toUpperCase());if(priceEnough(p)){r.price=p;r.priceAt=Date.now();r.priceFeed='TradingView Scanner';found.add(r.id);}}}catch(e){log('TV Scanner: '+e.message);}}
-   if(found.size<records.length){try{const j=await json(WORKER+'/api/monitor/tickers?type=PERP',{},11000);const byP=new Map((j.tickers||[]).map(x=>[String(x.symbol).toUpperCase(),Number(x.price)]));for(const r of records){if(found.has(r.id))continue;const p=byP.get(r.s.pionex.toUpperCase());if(priceEnough(p)){r.price=p;r.priceAt=Date.now();r.priceFeed='Pionex Worker';found.add(r.id);}}}catch(e){log('Pionex Worker ticker: '+e.message);}}
+   for(const group of chunks){try{const tickers=[...new Set(group.map(r=>r.s.tv.toUpperCase()))];const payload={filter:[],options:{lang:'en'},symbols:{query:{types:[]},tickers},columns:['close','open','high','low'],range:[0,Math.max(80,tickers.length+10)]};const j=await json(SCANNER,{method:'POST',mode:'cors',headers:{Accept:'application/json','Content-Type':'text/plain'},body:JSON.stringify(payload)},11000);const byTv=new Map((j.data||[]).map(x=>[String(x.s).toUpperCase(),x.d]));for(const r of group){const d=byTv.get(r.s.tv.toUpperCase()),p=Number(d?.[0]);if(priceEnough(p)){
+        r.price=p;r.priceAt=Date.now();r.priceFeed='TradingView Scanner';found.add(r.id);
+        const o=Number(d?.[1]),h=Number(d?.[2]),l=Number(d?.[3]);
+        r.liveOHLC=[o,h,l].every(priceEnough)&&h>=Math.max(o,p)&&l<=Math.min(o,p)
+          ?{day:Math.floor(Date.now()/DAY)*DAY,o,h,l,c:p}:null;
+      }}}catch(e){log('TV Scanner: '+e.message);}}
+   if(found.size<records.length){try{const j=await json(WORKER+'/api/monitor/tickers?type=PERP',{},11000);const byP=new Map((j.tickers||[]).map(x=>[String(x.symbol).toUpperCase(),Number(x.price)]));for(const r of records){if(found.has(r.id))continue;const p=byP.get(r.s.pionex.toUpperCase());if(priceEnough(p)){r.price=p;r.priceAt=Date.now();r.priceFeed='Pionex Worker';r.liveOHLC=null;found.add(r.id);}}}catch(e){log('Pionex Worker ticker: '+e.message);}}
    // Do not label old quotes as current; bar last-close is used only for proxies, not as live price.
    records.forEach(updateDerived);state.priceAt=Date.now();renderAll();log('現價成功 '+found.size+'/'+records.length);
  })();state.priceBusy=task;try{return await task;}finally{state.priceBusy=null;}
@@ -287,7 +395,7 @@
    setInterval(()=>{if(!document.hidden)fetchCG();},60000);
    setInterval(()=>{if(!document.hidden)queueAll();},60000);
    document.addEventListener('visibilitychange',()=>{if(!document.hidden){fetchPrices();fetchCG();queueAll();}});
-   window.LIQ_TEST={version:'1.1.1',records,state,extractCG,resolveCG,candidateZones,updateDerived,calcModel,enqueue,log,renderDiag,reorder,chooseSort};
+   window.LIQ_TEST={version:'1.1.3',records,state,extractCG,resolveCG,candidateZones,dailyAsOf,dailyHA,dailyCciSma,dailySState,renderRow,renderAll,updateDerived,calcModel,enqueue,log,renderDiag,reorder,chooseSort,sortValue};
  }
  setup();
 })();

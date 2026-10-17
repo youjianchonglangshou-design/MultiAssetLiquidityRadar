@@ -1,12 +1,11 @@
 {
-  "name": "MultiAssetLiquidityRadar",
-  "version": "1.1.1",
+  "version": "1.1.3",
   "releaseDate": "2026-10-17",
   "changes": [
-    "Add compact sequential row index, renumbered after searching, filtering and sorting",
-    "Make item, symbol, nearest liquidation boundary, daily HA and directional probability column headers clickable with ascending/descending sorting, maintaining dropdown options",
-    "Compress liquidation three-line chart width to approximately 355px and daily HA width to 106px; reduce page max width to 1110px",
-    "Bound diagnostic logs to 32 messages (existing cap) and defer DOM redraw until diagnostic panel is expanded",
-    "Preserve user-modified symbols.js, all existing market feeds, CoinGlass mappings and BTC-model calculations"
+    "Insert sortable S-state and daily midline slope columns before daily Heikin-Ashi K; semantic colors and numeric slope tooltip",
+    "Load original SStateMarketTerminal/monitor-engine.js directly and call its analyze function on the identical daily OHLC, avoiding approximate reimplementation of S0.5/S1/S2/S3 and midline shape rules",
+    "When HA-yellow is sorted, yellow+yellow is prioritized and exact midline regime / S-state break ties",
+    "Live 1D OHLC from TradingView Scanner reused for S-state, midline, HA and CCI without changing BTC 39-feature model",
+    "Keep user-managed symbols.js untouched, CoinGlass + 15M proxy feeds, 10-second updates, no freeze / no next-day settlement"
   ]
 }

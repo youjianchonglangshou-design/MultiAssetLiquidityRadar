@@ -36,3 +36,46 @@
 .prob-num.loser{font-size:16px}
 .prob-label{font-size:9px}
 @media(max-width:960px){.shell{padding:8px}.radar-table{min-width:940px}}
+
+/* v1.1.2 · Daily CCI-SMA column between HA and probability. */
+.shell{max-width:1210px}
+.radar-table{min-width:1060px}
+.c-index{width:48px}
+.c-symbol{width:126px}
+.c-radar{width:355px}
+.c-ha{width:106px}
+.c-cci{width:104px}
+.c-prob{width:auto}
+.radar-table thead th:nth-child(4),.radar-table thead th:nth-child(5){text-align:center}
+.radar-table tbody td:nth-child(4),.radar-table tbody td:nth-child(5){padding-left:5px;padding-right:5px}
+@media(max-width:960px){.radar-table{min-width:1060px}}
+
+/* v1.1.3 - SState S / midline above HA. Keep three liquidation lines 355px. */
+.shell{max-width:1405px}
+.radar-table{min-width:1270px}
+.c-index{width:48px}
+.c-symbol{width:126px}
+.c-radar{width:355px}
+.c-sstate{width:88px}
+.c-midline{width:119px}
+.c-ha{width:106px}
+.c-cci{width:104px}
+.c-prob{width:auto}
+.radar-table thead th:nth-child(4),.radar-table thead th:nth-child(5),.radar-table thead th:nth-child(6),.radar-table thead th:nth-child(7){text-align:center}
+.radar-table tbody td:nth-child(4),.radar-table tbody td:nth-child(5),.radar-table tbody td:nth-child(6),.radar-table tbody td:nth-child(7){padding-left:4px;padding-right:4px;text-align:center}
+.state-wrap,.mid-wrap{text-align:center}
+.state-badge{display:inline-block;border-radius:100px;min-width:49px;padding:5px 7px;font-size:11px;line-height:1.2;font-weight:850;border:1px solid}
+.state-badge.s3{color:#8af6cd;background:#164c41;border-color:#1a9f83}
+.state-badge.s2{color:#69e9a8;background:#0e493b;border-color:#2a9f70}
+.state-badge.s1{color:#7bcfff;background:#153d57;border-color:#2c83ba}
+.state-badge.s05{color:#ead0ff;background:#54367b;border-color:#9160b8}
+.state-badge.s0{color:#dce9f6;background:#374b64;border-color:#8398ad}
+.state-badge.other{color:#c1ccd9;background:#2b3b4b;border-color:#58677a}
+.state-badge.unknown,.mid-label.unknown{color:#8197a7;background:#193246;border-color:#35506a}
+.state-sub,.mid-sub{font-size:9px;color:#9cb6c7;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mid-label{display:inline-block;white-space:nowrap;font-weight:850;font-size:12px;padding:6px 3px;border-radius:4px;border:1px solid transparent}
+.mid-label.rising{color:#56dfa8;background:#0f4037;border-color:#236f56}
+.mid-label.flat{color:#bddae7;background:#1c3646;border-color:#446176}
+.mid-label.flattening{color:#ffcf76;background:#493a28;border-color:#8e6938}
+.mid-label.falling{color:#ff859a;background:#4b2c3a;border-color:#9c4560}
+@media(max-width:960px){.radar-table{min-width:1270px}}
